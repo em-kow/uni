@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Java
+*.class
+build/
+out/
+
+# C / C++
+*.o
+*.out
+*.exe
+*.dSYM/
