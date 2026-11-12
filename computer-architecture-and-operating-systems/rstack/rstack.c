@@ -1,4 +1,4 @@
-// Autor rozwiązania: Mikołaj Kowalski (479520)
+// Author: Mikołaj Kowalski (479520)
 
 
 
@@ -12,65 +12,70 @@
 
 
 
-// Typ elementu na stosie:
-// TYPE_VALUE - wartość,
-// TYPE_STACK - referencja do innego stosu.
+// Stack element types: TYPE_VALUE stores a number; TYPE_STACK stores a
+// reference to another stack.
 typedef enum {
     TYPE_VALUE,
     TYPE_STACK
 } elem_type_t;
 
 
-// Element listy elementów na stosie.
+// A node in the linked list of stack elements.
 typedef struct elem {
-    elem_type_t type; // Typ elementu.
+    // Element type.
+    elem_type_t type;
 
     union {
-        uint64_t value; // Wartość w przypadku gdy element jest liczbą.
+        // Numeric value for a TYPE_VALUE element.
+        uint64_t value;
 
-        struct rstack *stack; // Referencja do innego stosu wpp.
+        // Reference to another stack for a TYPE_STACK element.
+        struct rstack *stack;
     } data;
 
-    struct elem* next; // Wskaźnik na o jeden głębszy element stosu.
+    // Pointer to the next element below this one.
+    struct elem* next;
 } elem_t;
 
-// Kolory używane przez pomocniczy algorytm wykrywania i usuwania nieosiągalnych
-// stosów oraz tzw. "martwych" cykli, tj. takich komponentów grafu referencji,
-// które nie są już osiągalne z poziomu użytkownika i utrzymują się wyłącznie
-// dzięki referencjom wewnętrznym między swoimi elementami oraz 
-// nieosiągalnych stosów. 
+// States used to detect and reclaim unreachable stacks, including cycles kept
+// alive only by references from other unreachable stacks.
 typedef enum {
-    COLOR_BLACK, // Obiekt nie jest kandydatem do usunięcia.
+    // Not a candidate for collection.
+    COLOR_BLACK,
 
-    COLOR_GRAY, // Obiekt aktualnie badany.
+    // Currently being examined.
+    COLOR_GRAY,
 
-    COLOR_WHITE, // Obiekt nieosiągalny.
+    // Unreachable stack.
+    COLOR_WHITE,
 
-    COLOR_PURPLE // Obiekt nieosiągalny już zebrany do usunięcia.
+    // Unreachable stack already queued for collection.
+    COLOR_PURPLE
 } color_t;
 
 
-// Struktura opisująca stos rekurencyjny.
+// Recursive stack representation.
 struct rstack {
-    size_t refcount; // Licznik wszystkich referencji do stosu.
+    // Total number of references to this stack.
+    size_t refcount;
 
-    elem_t *top; // Wskaźnik na wierzchołek listy elementów stosu.
+    // Head of the linked list of stack elements.
+    elem_t *top;
 
-    bool visited; // Znacznik odwiedzenia używany podczas przechodzenia po 
-    // strukturze stosów algorytmem DFS.
+    // Visited flag used when traversing the stack graph with DFS.
+    bool visited;
 
-    color_t color; // Aktualny stan stosu w algorytmie wykrywania i usuwania
-    // nieosiągalnych stosów i martwych cykli w grafie referencji.
+    // Current state in the cycle collection algorithm.
+    color_t color;
 
-    bool in_write; // Znacznik informujący, czy stos jest aktualnie
-    // przetwarzany podczas zapisu do pliku.
+    // Whether this stack is on the current file-writing recursion path.
+    bool in_write;
 
-    struct rstack *collect_next; // Jeśli stos został uznany za nieosiągalny,
-    // ten wskaźnik wskazuje na kolejny nieosiągalny stos do usunięcia.
+    // Next unreachable stack queued for collection.
+    struct rstack *collect_next;
 };
 
 
-// r_stack_new() - Funkcja tworząca nowy pusty stos.
 rstack_t *rstack_new() {
     rstack_t *rs = malloc(sizeof(rstack_t));
 
@@ -79,33 +84,35 @@ rstack_t *rstack_new() {
         return nullptr;
     }
 
-    rs->refcount = 1; // Stos ma jedną referencję.
+    // The caller owns the initial reference.
+    rs->refcount = 1;
 
-    rs->top = nullptr; // Stos nie zawiera żadnych elementów.
+    // The stack initially has no elements.
+    rs->top = nullptr;
 
-    rs->visited = false; // Domyślnie stos nie jest odwiedzony w 
-    // algorytmie DFS.
+    // Initially unvisited by DFS.
+    rs->visited = false;
 
-    rs->color = COLOR_BLACK; // Domyślny kolor stosu to COLOR_BLACK.
+    // The initial collection state is COLOR_BLACK.
+    rs->color = COLOR_BLACK;
 
-    rs->in_write = false; // Domyślnie stos nie jest na
-    // ścieżce rekurencji.
+    // Initially outside the file-writing recursion path.
+    rs->in_write = false;
 
-    rs->collect_next = nullptr; // Domyślnie stos nie jest
-    // uznany za nieosiągalny.
+    // Initially not queued for collection.
+    rs->collect_next = nullptr;
 
     return rs;
 }
 
 
-// rstack_push_value() - Funkcja odkładjąca lizcbę na stos.
 int rstack_push_value(rstack_t *rs, uint64_t value) {
     if (rs == nullptr) {
         errno = EINVAL;
         return -1;
     }
 
-    // Alokujemy pamięć na nowy element stosu.
+    // Allocate a new stack element.
     elem_t *e = malloc(sizeof(elem_t));
     if (e == nullptr) {
         errno = ENOMEM;
@@ -113,89 +120,75 @@ int rstack_push_value(rstack_t *rs, uint64_t value) {
         return -1;
     }
 
-    // Nowy element reprezentuje zwykłą wartość liczbową.
+    // The new element stores a numeric value.
     e->type = TYPE_VALUE;
     e->data.value = value;
 
-    // Nowy element ma wskazywać na poprzedni wierzchołek stosu,
-    // dzięki czemu stanie się nowym początkiem listy.
+    // Link the new element to the previous top of the stack.
     e->next = rs->top;
 
-    // Aktualizujemy wierzchołek stosu.
+    // Update the top of the stack.
     rs->top = e;
 
     return 0;
 }
 
 
-// rstack_push_rstack() - Funkcja odkładająca stos na stos.
 int rstack_push_rstack(rstack_t *rs1, rstack_t *rs2) {
     if (rs1 == nullptr || rs2 == nullptr) {
         errno = EINVAL;
         return -1;
     }
 
-    // Alokujemy pamięć na nowy element stosu.
+    // Allocate a new stack element.
     elem_t *e = malloc(sizeof(elem_t));
     if (e == nullptr) {
         errno = ENOMEM;
         return -1;
     }
 
-    // Nowy element będzie przechowywał refrencję do innego stosu.
+    // The new element stores a reference to another stack.
     e->type = TYPE_STACK;
     e->data.stack = rs2;
 
-    // Nowy element ma wskazywać na poprzedni wierzchołek stosu rs1,
-    // dzięki czemu stanie się nowym początkiem listy.
+    // Link the new element to the previous top of rs1.
     e->next = rs1->top;
 
-    // Aktualizujemy wierzchołek stosu rs1.
+    // Update the top of rs1.
     rs1->top = e;
 
-    // Odkładany stos rs2 zyskuje nową refrencję.
+    // The pushed stack rs2 gains a reference.
     rs2->refcount++;
 
     return 0;
 }
 
-// rstack_empty() - Funkcja sprawdzająca rekurencyjnie, 
-// czy stos zawiera liczbę.
-// Korzysta ona z dwóch funkcji pomocniczych:
-// rstack_empty_dfs() - Funkcja przeszukująca graf referencji algorytmem DFS
-// w celu znalezienia liczby na którymś ze stosów.
-// rstack_clear_visited() - Funkcja ustawiająca z powrotem znaczniki visited
-// stosów na false.
+// rstack_empty_dfs() searches the reference graph using DFS.
+// rstack_clear_visited() resets the visited flags afterwards.
 
 static bool rstack_empty_dfs(rstack_t *rs) {
     if (rs == nullptr) {
         return true;
     }
 
-    // Ustawiamy stos jako odwiedzony, 
-    // aby nie wywoływać się w nim ponownie.
+    // Mark this stack as visited to avoid revisiting it.
     rs->visited = true;
 
-    // Iterujemy się po elementach stosu.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
-        // Jeśli element stosu jest liczbą, to znaczy,
-        // że nie jest on pusty.
+        // A numeric element means the stack is not recursively empty.
         if (e->type == TYPE_VALUE) {
             return false;
         }
 
-        // Jeśli element stosu jest innym stosem, rekurencyjnie
-        // się w nim wywołujemy, o ile nie zrobiliśmy tego wcześniej.
+        // Recursively explore referenced stacks that have not been visited yet.
         if (e->type == TYPE_STACK) {
-            // child wskazuje na aktualnie analizowany podstos 
-            // (stos leżący na naszym stosie).
+            // The referenced child stack.
             rstack_t *child = e->data.stack;
 
-            // Sprawdzamy czy wywołaliśmy się już wcześniej na
-            // tym rozpatrywanym podstosie, aby uniknąć zapętlenia
+            // Skip visited stacks to avoid looping through cycles.
             if (child != nullptr && !child->visited) {
-                // Jeśli znaleźliśmy na nim liczbę, 
-                // to nasz stos nie jest pusty.
+                // A number in a child stack also makes this stack nonempty.
                 if (!rstack_empty_dfs(child)) {
                     return false;
                 }
@@ -203,8 +196,7 @@ static bool rstack_empty_dfs(rstack_t *rs) {
         }
     }
 
-    // Jeśli nie udało nam się znaleźć liczby na naszym stosie ani 
-    // rekurencyjnie na stosach na nim leżących, to stos jest pusty.
+    // No number was found in this stack or in any reachable child stack.
     return true;
 }
 
@@ -213,18 +205,16 @@ static void rstack_clear_visited(rstack_t *rs) {
         return;
     }
 
-    // Ustawiamy z powrotem stos jako nieodwiedzony.
+    // Reset this stack's visited flag.
     rs->visited = false;
 
-    // Iterujemy się po elementach stosu.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
         if (e->type == TYPE_STACK) {
-            // child wskazuje na aktualnie rozpatrywany podstos
-            //  (stos leżący na naszym stosie).
+            // The referenced child stack.
             rstack_t *child = e->data.stack;
 
-            // Sprawdzamy, czy rozpatrywany podstos jest odwiedzony. 
-            // Jeśli tak, wywołujemy się w nim.
+            // Recursively clear the flag of each visited child stack.
             if (child != nullptr && child->visited) {
                 rstack_clear_visited(e->data.stack);
             }
@@ -233,60 +223,45 @@ static void rstack_clear_visited(rstack_t *rs) {
 }
 
 bool rstack_empty(rstack_t *rs) {
-    // Szukamy rekurencyjnie na stosie liczby 
-    // za pomocą dedykowanej funkcji.
+    // Search recursively for a number.
     bool result = rstack_empty_dfs(rs);
 
-    // Przywracamy rekurencyjnie stosom
-    // status nieodwiedzonych.
+    // Reset the visited flags throughout the traversed graph.
     rstack_clear_visited(rs);
 
-    // Zwracamy znaleziony wcześniej wynik.
+    // Return the search result.
     return result;
 }
 
 
-// rstack_front() - Funkcja znajdująca rekurencyjnie liczbę, która 
-// jest najbliżej wierzchołka stosu.
-// Korzysta ona z dwóch funkcji pomocniczych:
-// rstack_front_dfs() - Funkcja przeszukująca graf referencji algorytmem
-// DFS do momentu, aż znajdzie liczbę - to będzie liczba najbliżej
-// wierzchołka stosu.
-// rstack_clear_visited() - Funkcja pomocnicza użyta przy implementacji
-// funkcji rstack_empty().
-
-
+// rstack_front_dfs() searches the reference graph; rstack_clear_visited(), also
+// used by rstack_empty(), resets the visited flags afterwards.
 static result_t rstack_front_dfs(rstack_t *rs) {
     if (rs == nullptr) {
         return (result_t){ .flag = false, .value = 0 };
     }
 
-    // Ustawiamy stos jako odwiedzony, aby nie wywoływać się w nim ponownie.
+    // Mark this stack as visited to avoid revisiting it.
     rs->visited = true;
 
-    // Iterujemy się po elementach stosu.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
-        // Jeśli element stosu jest liczbą, zwracamy ją
-        // jako liczbę najbliżej wierzchołka.
+        // Return the first numeric element encountered.
         if (e->type == TYPE_VALUE) {
             return (result_t){ .flag = true, .value = e->data.value };
         }
 
-        // Jeśli element stosu jest innym stosem, rekurencyjnie
-        // się w nim wywołujemy, o ile nie zrobiliśmy tego wcześniej.
+        // Recursively explore referenced stacks that have not been visited yet.
         if (e->type == TYPE_STACK) {
-            // child wskazuje na aktualnie rozpatrywany podstos 
-            // (stos leżący na naszym stosie).
+            // The referenced child stack.
             rstack_t *child = e->data.stack;
 
-            // Sprawdzamy, czy wywołaliśmy się już wcześniej na
-            // tym rozpatrywanym podstosie, aby uniknąć zapętlenia.
+            // Skip visited stacks to avoid looping through cycles.
             if (child != nullptr && !child->visited) {
                 result_t sub = rstack_front_dfs(child);
 
-                // Jeśli w rozpatrywanym podstosie znaleziono 
-                // jakąś liczbę, zgodnie z działaniem algorytmu
-                // DFS, zwracamy ją jako liczbę najbliżej wierzchołka stosu.
+                // Return the first number found in the child stack's DFS
+                // traversal.
                 if (sub.flag) {
                     return sub;
                 }
@@ -294,65 +269,38 @@ static result_t rstack_front_dfs(rstack_t *rs) {
         }
     }
 
-    // Jeśli nie znaleziono żadnej liczby ani w rozpatrywanym stosie,
-    // ani w jego podstosach, zwracamy informację o braku wyniku.
+    // No number was found in this stack or in any reachable child stack.
     return (result_t){ .flag = false, .value = 0 };
 }
 
 result_t rstack_front(rstack_t *rs) {
-    // Szukamy rekurencyjnie liczby najbliżej wierzchołka stosu
-    //  za pomocą dedykowanej funkcji
+    // Find the first number in a top-first DFS traversal.
     result_t result = rstack_front_dfs(rs);
 
-    // Przywracamy rekurencyjnie stosom status nieodwiedzonych.
+    // Reset the visited flags throughout the traversed graph.
     rstack_clear_visited(rs);
 
-    // Zwracamy znaleziony wcześniej wynik.
+    // Return the search result.
     return result;
 }
 
-// rstack_delete() - Funkcja usuwająca jedną referencję do stosu. 
-// Wywołana przez użytkownika usuwa dostęp do stosu z poziomu
-// użytkownika (kasuje go). Dba również o brak wycieków pamięci,
-// zwalnia pamięć po nieosiągalnych stosach oraz wykrywa 
-// martwe cykle i je usuwa. 
-//
-// Korzysta z funkcji pomocniczych:
-// rstack_destroy() - Funkcja niszcząca stos, zwalnia pamięć
-// po nim i odejmuje referencje podstosom będącymi jego elementami.
+// The helpers below implement destruction and cycle collection.
+// rstack_destroy() frees a stack and releases its references to child stacks.
 static void rstack_destroy(rstack_t *rs);
-//
-// rstack_trial_unlink() - Funkcja realizująca pierwszą fazę algorytmu
-// wykrywania nieosiągalnych stosów i martwych cykli. Tymczasowo odłącza
-// badany stos od stosów, do których prowadzą jego referencje,
-// zmniejszając ich liczniki referencji i rekurencyjnie wykonuje dla nich
-// to samo. Ustawia ona również kolor tych stosów jako szare (patrz ).
+// rstack_trial_unlink() performs phase 1: temporarily decrement the reference
+// count for each edge in the reachable graph and mark visited stacks gray.
 static void rstack_trial_unlink(rstack_t *rs);
-//
-// rstack_check() - Funkcja realizująca drugą fazę algorytmu wykrywania
-// nieosiągalnych stosów i martwych cykli. Sprawdza, czy po tymczasowym
-// odłączeniu referencji badany stos ma dodatni licznik referencji.
-// Jeśli tak, to przywraca wcześniej odłączone referencje stosom, do których
-// prowadzą jego referencje i rekurencyjnie wykonuje dla nich to samo.
-// W przeciwnym razie oznacza stos jako nieosiągalny i rekurencyjnie
-// wywołuje się w stosach, do których prowadzą jego referencje.
+// rstack_check() performs phase 2: a positive remaining reference count
+// triggers restoration of the reachable subgraph. Otherwise, mark the stack
+// white and recursively examine its children.
 static void rstack_check(rstack_t *rs);
-//
-// rstack_restore() - Funkcja pomocnicza drugiej fazy algorytmu. Przywraca
-// wcześniej tymczasowo odłączone referencje w osiągalnej części struktury:
-// oznacza odwiedzane stosy z powrotem jako czarne, odtwarza zmniejszone
-// liczniki referencji i rekurencyjnie wykonuje tę samą operację dla
-// stosów, do których prowadzą ich referencje.
+// rstack_restore() supports phase 2 by restoring temporarily decremented
+// reference counts in the live subgraph and marking its stacks black.
 static void rstack_restore(rstack_t *rs);
-//
-// rstack_collect_mark() - Funkcja pomocnicza trzeciej fazt algorytmu.
-// Przechodzi rekurencyjnie po białych stosach osiągalnych z zadanego stosu,
-// oznacza je jako przeznaczone do zebrania oraz wpina je na listę stosów
-// przeznaczonych do usunięcia.
+// rstack_collect_mark() supports phase 3 by traversing white stacks and linking
+// them into the collection list.
 static void rstack_collect_mark(rstack_t *rs, rstack_t **head);
-//
-// rstack_collect() - Funkcja realizująca trzecią fazę algorytmu,
-// czyli usuwająca nieosiągalne stosy oznaczone jako białe.
+// rstack_collect() performs phase 3: reclaim unreachable stacks marked white.
 static void rstack_collect(rstack_t *rs);
 
 
@@ -361,23 +309,22 @@ void rstack_delete(rstack_t *rs) {
         return;
     }
 
-    // Zmniejszamy licznik referencji.
+    // Release one reference.
     rs->refcount--;
 
-    // Jeśli licznik referencji spadł do zera, to naturalnie
-    // musimy zniszczyć ten stos.
+    // Destroy the stack immediately if no references remain.
     if (rs->refcount == 0) {
         rstack_destroy(rs);
     } 
     
     else {
-        // Faza 1.
+        // Phase 1: temporarily remove internal references.
         rstack_trial_unlink(rs);
 
-        // Faza 2.
+        // Phase 2: identify live and unreachable stacks.
         rstack_check(rs);
 
-        // Faza 3.
+        // Phase 3: reclaim unreachable stacks.
         rstack_collect(rs);
     }
 }
@@ -387,20 +334,17 @@ static void rstack_destroy(rstack_t *rs) {
         return;
     }
 
-    // e - wskaźnik do początku listy odpowiadającej elementom tego stosu,
-    // zwalniamy po nim pamięć
+    // Detach the list of elements before freeing it.
     elem_t *e = rs->top;
     rs->top = nullptr;
 
-    // Zwalniamy pamięć po każdym elemencie tej listy idąc od wierzchu.
+    // Free each element, starting from the top.
     while (e != nullptr) {
-        // next - wskaźnik do następnego elementu względem naszego aktualnego 
-        // nieusuniętego frontu
+        // Save the next element before freeing the current one.
         elem_t *next = e->next;
 
-        // Jeśli aktualny front, który usuwamy, jest referencją
-        // do innego stosu, to znaczy, że ten stos traci jedną referencję,
-        // więc musimy ją usunąć dedykowaną funkcją.
+        // A referenced child stack loses one reference when this element is
+        // removed.
 
         if (e->type == TYPE_STACK) {
             rstack_delete(e->data.stack);
@@ -410,34 +354,31 @@ static void rstack_destroy(rstack_t *rs) {
         e = next;
     }
 
-    // Na koniec, po zwolnieniu pamięci po elementach stosu, 
-    // zwalniamy pamięć po samym stosie.
+    // After freeing its elements, free the stack itself.
     free(rs);
 }
 
 
-// Funkcja obsługująca fazę 1 algorytmu (opis: linijki )
+// Phase 1 of cycle collection: temporarily remove internal references.
 static void rstack_trial_unlink(rstack_t *rs) {
     if (rs == nullptr) {
         return;
     }
 
-    // Jeśli stos już ma szary kolor, to nie wchodzimy do niego ponownie,
-    // bo nie chcemy trafić w nieskończoną rekurencję wynikającą
-    // z istnienia cyklu.
+    // Do not revisit gray stacks; this prevents infinite recursion through
+    // cycles.
     if (rs->color == COLOR_GRAY) {
         return;
     }
 
-    // Ustawiamy kolor stosu na szary.
+    // Mark the stack gray.
     rs->color = COLOR_GRAY;
 
-    // Iterujemy się po elementach leżących na stosie.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
         if (e->type == TYPE_STACK) {
-            // Jeśli aktualnie rozpatrywany element stosu (child) to stos,
-            // to zgodnie z działaniem algorytmu tymczasowo usuwamy mu
-            // referencję i rekurencyjnie się w nim wywołujemy.
+            // Temporarily remove this reference to the child stack, then
+            // explore it recursively.
             rstack_t *child = e->data.stack;
             child->refcount--;
             rstack_trial_unlink(child);
@@ -451,16 +392,15 @@ static void rstack_restore(rstack_t *rs) {
         return;
     }
 
-    // Jeżeli stos jest czarny, to znaczy, że został
-    // juz wcześniej przywrócony.
+    // A black stack has already been restored.
     if (rs->color == COLOR_BLACK) {
         return;
     }
 
-    // Ustawiamy kolor stosu z powrotem na czarny.
+    // Restore the stack's black state.
     rs->color = COLOR_BLACK;
 
-    // Iterujemy się po elementach stosu.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
         if (e->type == TYPE_STACK) {
             rstack_t *child = e->data.stack;
@@ -476,26 +416,24 @@ static void rstack_check(rstack_t *rs) {
         return;
     }
 
-    // Jeśli kolor stosu nie jest szary, to znaczy, że został już rozpatrzony.
+    // A stack that is no longer gray has already been processed.
     if (rs->color != COLOR_GRAY) {
         return;
     }
 
-    // Jeśli licznik referencji rozpatrywanego stosu jest dodatni, to zgodnie
-    // z algorytmem uruchamiamy procedurę przywracania.
+    // A positive remaining reference count means this subgraph must be
+    // restored.
     if (rs->refcount > 0) {
         rstack_restore(rs);
         return;
     }
 
-    // W przeciwnym wypadku wiemy, że aktualnie rozpatrywany
-    // stos jest śmieciem, więc ustawiamy jego kolor jako biały.
+    // Otherwise, mark the stack white as a collection candidate.
     rs->color = COLOR_WHITE;
 
-    // Iterujemy się po elementach leżących na aktualnie rozpatrywanym stosie,
-    // aby kontynuować drugą fazę algorytmu.
+    // Continue phase 2 through the stack's outgoing references.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
-        // Jeśli dany element jest stosem, wywołujemy na nim funkcję.
+        // Recursively examine each referenced stack.
         if (e->type == TYPE_STACK) {
             rstack_check(e->data.stack);
         }
@@ -508,23 +446,20 @@ static void rstack_collect_mark(rstack_t *rs, rstack_t **head) {
         return;
     }
 
-    // Oznaczamy stos jako zebrany do usunięcia, aby 
-    // nie trafić w nieskończoną pętlę.
+    // Mark the stack as queued to avoid revisiting it through a cycle.
     rs->color = COLOR_PURPLE;
 
-    // Wpinamy stos na początek listy do zwolnienia.
+    // Prepend the stack to the collection list.
     rs->collect_next = *head;
     *head = rs;
 
-    // Iterujemy się po elementach stosu.
+    // Iterate over the stack elements.
     for (elem_t *e = rs->top; e != nullptr; e = e->next) {
         if (e->type == TYPE_STACK) {
-            // Child wskazuje na aktualnie rozpatrywany podstos
-            // (stos leżący na naszym stosie).
+            // The referenced child stack.
             rstack_t *child = e->data.stack;
 
-            // Sprawdzamy, czy rozpatrywany podstos istnieje i jest biały.
-            // Jeśli tak, wywołujemy się w nim rekurencyjnie.
+            // Recursively collect each existing white child stack.
             if (child != nullptr && child->color == COLOR_WHITE) {
                 rstack_collect_mark(child, head);
             }
@@ -534,59 +469,56 @@ static void rstack_collect_mark(rstack_t *rs, rstack_t **head) {
 
 
 static void rstack_collect(rstack_t *rs) {
-    // head wskazuje na początek listy stosów przeznaczonych do usunięcia.
+    // Head of the list of stacks to reclaim.
     rstack_t *head = nullptr;
 
-    // Zbieramy wszystkie białe stosy na listę za pomocą dedykowanej funkcji.
+    // Gather all reachable white stacks into the collection list.
     rstack_collect_mark(rs, &head);
 
-    // Iterujemy się po liście stosów przeznaczonych do usunięcia.
+    // Iterate over the stacks queued for collection.
     for (rstack_t *p = head; p != nullptr; p = p->collect_next) {
-        // e wskazuje na pierwszy element aktualnie rozpatrywanego stosu.
+        // The first element of the current stack.
         elem_t *e = p->top;
         
-        // Iterujemy się po elementach aktualnie rozpatrywanego stosu.
+        // Iterate over the current stack's elements.
         while (e != nullptr) {
-            // next wskazuje na kolejny element stosu.
+            // Save the next element.
             elem_t *next = e->next;
 
-            // Zwalniamy aktualnie rozpatrywany element.
+            // Free the current element.
             free(e);
 
-            // Przechodzimy do kolejnego elementu stosu.
+            // Advance to the next element.
             e = next;
         }
     }
 
-    // Iterujemy się po liście stosów przeznaczonych do usunięcia.
+    // Iterate over the stacks queued for collection.
     while (head != nullptr) {
-        // next wskazuje na kolejny stos z listy do usunięcia.
+        // Save the next stack in the collection list.
         rstack_t *next = head->collect_next;
 
-        // Zwalniamy aktualnie rozpatrywany stos.
+        // Free the current stack.
         free(head);
 
-        // Przechodzimy do kolejnego stosu z listy.
+        // Advance to the next stack.
         head = next;
     }
 }
 
-// rstack_pop() - Funkcja zdejmująca nierekurencyjnie wierzchołek stosu.
 void rstack_pop(rstack_t *rs) {
-    // Sprawdzamy czy stos jest pusty.
+    // Do nothing if the pointer is null or the stack has no top-level elements.
     if (rs == nullptr || rs->top == nullptr) {
         return;
     }
 
-    // Zapamiętujemy aktualny wierzchołek stosu.
+    // Save the current top element.
     elem_t *e = rs->top;
     
-    // Ustawiamy wierzchołek jako kolejny element względem poprzedniego
-    // wierzchołka.
+    // Make the following element the new top.
     rs->top = e->next;
 
-    // W przypadku, gdy zdejmowany wierzchołek był stosem, musimy usunąć
-    // mu referencję od stosu, który obsługujemy.
+    // If the removed element references a stack, release that reference.
     if (e->type == TYPE_STACK) {
         rstack_delete(e->data.stack);
     }
@@ -595,33 +527,29 @@ void rstack_pop(rstack_t *rs) {
 }
 
 
-// rstack_read() - Funkcja tworząca nowy stos, na którym odłożone są liczby 
-// podane w pliku.
 
 rstack_t *rstack_read(char const *path) {
-    // Rozpatrujemy przypadek błędnie podanej ścieżki i ustawiamy
-    // odpowiednie errno.
+    // Reject a null path and set errno accordingly.
     if (path == nullptr) {
         errno = EINVAL;
 
         return nullptr;
     }
 
-    // Zachowujemy poprzednią wartość errno, 
-    // aby przy sukcesie jej nie zmieniać.
+    // Preserve the incoming errno on success.
     int entry_errno = errno;
 
-    // Otwieramy plik w trybie tekstowym do odczytu.
+    // Open the file for reading in text mode.
     FILE *f = fopen(path, "r");
     if (f == nullptr) {
         return nullptr;
     }
 
-    // Tworzymy nowy pusty stos, do którego będą trafiały odczytane wartości.
+    // Create an empty stack for the values read from the file.
     rstack_t *rs = rstack_new();
 
-    // Jeśli nie udało się utworzyć stosu, zamykamy wcześniej otwarty plik
-    // i zachowujemy kod błędu ustawiony przez rstack_new().
+    // If allocation fails, close the file and preserve the error from
+    // rstack_new().
     if (rs == nullptr) {
         int saved_errno = errno;
         fclose(f);
@@ -629,266 +557,234 @@ rstack_t *rstack_read(char const *path) {
         return nullptr;
     }
 
-    // Zmienna przehowująca aktualnie rozpatrywany znak odczytywany z pliku.
+    // The current character read from the file.
     int c;
 
-    // Informacja, czy jesteśmy aktualnie w trakcie wczytywania liczby.
+    // Whether a number is currently being parsed.
     bool in_number = false;
 
-    // Wartość aktualnie budowanej liczby.
+    // Value of the number being parsed.
     uint64_t value = 0;
 
-    // Zerujemy errno przed odczytem, aby móc rozpoznać przypadek,
-    // gdy operacja wejścia/wyjścia zgłosi błąd bez ustawienia errno.
+    // Clear errno to detect an I/O failure that does not set it.
     errno = 0;
 
-    // Iterujemy się po kolejnych znakach z pliku.
+    // Read the file one character at a time.
     while ((c = fgetc(f)) != EOF) {
-        // Rzutujemy aktualnie rozpatrywany znak na unsigned char.
+        // Convert to unsigned char for character classification.
         unsigned char uc = (unsigned char)c;
 
-        // Przypadek, gdy aktualnie rozpatrywany znak jest białym znakiem
+        // Handle whitespace.
         if (isspace(uc)) {
-            // Gdy jesteśmy w trakcie wczytywania liczby,
-            // to biały znak je kończy, zatem wrzucamy wartość na stos.
+            // Whitespace terminates the current number; push its value onto the
+            // stack.
             if (in_number) {
-                // Rozpatrujemy przypadek błędu przy wrzucaniu liczby na stos.
+                // Handle a failed push.
                 if (rstack_push_value(rs, value) == -1) {
-                    // Zapamiętujemy errno, aby wynikało ono ze złego
-                    // przydzielenia pamięci przy wrzucaniu liczby na stos.
+                    // Preserve the allocation error reported by the push
+                    // operation.
                     int saved_errno = errno;
                     
-                    // Zamykamy wcześniej otwarty plik.
+                    // Close the file.
                     fclose(f);
 
-                    // Usuwamy utworzony stos.
+                    // Delete the partially built stack.
                     rstack_delete(rs);
 
-                    // Przywracamy poprawne errno.
+                    // Restore the original error code.
                     errno = saved_errno;
 
                     return nullptr;
                 }
 
-                // Skoro skończyliśmy wczytywanie liczby,
-                // to ustawiamy, że tego aktualnie nie robimy.
+                // The current number is complete.
                 in_number = false;
 
-                // Przygotowujemy zmienną do ewentualnego
-                // wczytywania kolejnej liczby.
+                // Prepare to parse the next number.
                 value = 0;
             }
         }
         
-        // Przypadek, gdy aktualnie rozpatrywany znak jest cyfrą.
+        // Handle a decimal digit.
         else if (isdigit(uc)) {
-            // Wartość aktualnie rozpatrywanej cyfry.
+            // Numeric value of the current digit.
             uint64_t digit = (uint64_t)(uc - '0');
 
-            // Jeśli nie jesteśmy w trakcie wczytywania liczby,
-            // to ta cyfra rozpoczyna wczytywanie kolejnej.
+            // The first digit starts a new number.
             if (!in_number) {
                 in_number = true;
 
-                // Wartość aktualnie wczytywanej liczby wynosi zatem tę cyfrę.
+                // Initialize the value with this digit.
                 value = digit;
             } 
 
-            // Jeśli jesteśmy w trakcie wczytywania liczby, 
-            // to dodajemy do niej kolejną cyfrę.
+            // Append a digit to the number being parsed.
             else {
-                // Operacja dopisania do liczby value cyfry digit to 
-                // value = value * 10 + digit.
-                // Rozpatrujemy przypadek, gdy przy tej operacji 
-                // zostanie przepełniony typ uint64_t.
+                // Appending a digit computes value * 10 + digit. Check for
+                // uint64_t overflow before performing the operation.
                 if (value > (UINT64_MAX - digit) / 10) {
-                    // Zamykamy wcześniej otwarty plik.
+                    // Close the file.
                     fclose(f);
 
-                    // Usuwamy utworzony stos.
+                    // Delete the partially built stack.
                     rstack_delete(rs);
 
-                    // Ustawiamy kod błędu na zły zakres wyniku.
+                    // Report an out-of-range value.
                     errno = ERANGE;
 
                     return nullptr;
                 }
 
-                // W przeciwnym wypadku wykonujemy operację dopisania cyfry.
+                // Append the digit once overflow has been ruled out.
                 value = value * 10 + digit;
             }
         }
 
-        // Przypadek, gdy aktualnie rozpatrywany znak nie 
-        // jest ani białym znakiem, ani cyfrą.
-        // Taki znak jest niedopuszczalny, oznacza to 
-        // niepoprawny format pliku.
+        // A character that is neither whitespace nor a digit makes the input
+        // invalid.
         else {
-            // Zamykamy wcześniej otwarty plik.
+            // Close the file.
             fclose(f);
 
-            // Usuwamy utworzony stos.
+            // Delete the partially built stack.
             rstack_delete(rs);
 
-            // Ustawiamy poprawne errno.
+            // Report invalid input.
             errno = EINVAL;
 
             return nullptr;
         }
     }
 
-    // Sprawdzamy, czy zakończenie odczytu 
-    // nastąpiło z powodu błędu pliku.
+    // Check whether reading stopped because of an I/O error.
     if (ferror(f)) {
-        // Zapamiętujemy errno, aby nie zostało utracone.
+        // Preserve the error code during cleanup.
         int saved_errno = errno;
 
-        // Jeśli biblioteka nie ustawiła errno, 
-        // przyjmujemy ogólny błąd wejścia/wyjścia.
+        // Use a generic I/O error if the library did not set errno.
         if (saved_errno == 0) {
             saved_errno = EIO;
         }
 
-        // Zamykamy wcześniej otwarty plik.
+        // Close the file.
         fclose(f);
 
-        // Usuwamy utworzony stos.
+        // Delete the partially built stack.
         rstack_delete(rs);
 
-        // Ustawiamy poprawne errno.
+        // Restore the error code.
         errno = saved_errno;
 
         return nullptr;
     }
 
-    // W przypadku, gdy koniec pliku został 
-    // osiągnięty w trakcie wczytywania liczby,
-    // musimy dodać tę liczbę na stos.
+    // If EOF ends a number, push that final value onto the stack.
     if (in_number) {
-        // Rozpatrujemy przypadek błędu przy 
-        // wrzucaniu liczby na stos.
+        // Handle a failed push.
         if (rstack_push_value(rs, value) == -1) {
-            // Zapamiętujemy errno, aby nie zostało utracone.
+            // Preserve the error code during cleanup.
             int saved_errno = errno;
 
-            // Zamykamy wcześniej otwarty plik.
+            // Close the file.
             fclose(f);
 
-            // Usuwamy utworzony stos.
+            // Delete the partially built stack.
             rstack_delete(rs);
 
-            // Ustawiamy poprawne errno.
+            // Restore the error code.
             errno = saved_errno;
 
             return nullptr;
         }
     }
 
-    // Po zakończeniu odczytu zamykamy plik.
-    // Rozpatrujemy przypadek, gdy zamknięcie 
-    // pliku się nie powiedzie.
+    // Close the file after reading and handle any failure.
 
-    // Zerujemy errno, aby móc rozpoznać przypadek,
-    // gdy zamknięcie pliku zgłosi błąd bez ustawienia errno.
+    // Clear errno to detect a close failure that does not set it.
     errno = 0;
 
     if (fclose(f) != 0) {
-        // Zapamiętujemy errno, aby nie zostało utracone.
+        // Preserve the error code during cleanup.
         int saved_errno = errno;
 
-        // Jeśli biblioteka nie ustawiła errno, 
-        // przyjmujemy ogólny błąd wejścia/wyjścia.
+        // Use a generic I/O error if the library did not set errno.
         if (saved_errno == 0) {
             saved_errno = EIO;
         }
 
-        // Usuwamy utworzony stos.
+        // Delete the newly built stack.
         rstack_delete(rs);
 
-        // Ustawiamy poprawne errno.
+        // Restore the error code.
         errno = saved_errno;
 
         return nullptr;
     }
     
-    // Jeśli wszystkie operacje zakończyły się powodzeniem, 
-    // zwracamy wskaźnik na wczytany stos oraz przywracamy
-    // wejściowe errno.
+    // On success, restore the incoming errno and return the newly built stack.
     errno = entry_errno;
 
     return rs;
 }
 
 
-// rstack_write() - Funkcja zapisująca do pliku liczby odłożone na stosie.
-// Przy wykryciu cyklu kończy ona zapisywanie.
 
-// Korzysta ona z dwóch funkcji pomocniczych: 
+// The two helpers below implement the traversal.
 
-// rstack_write_elems_from_bottom() - Funkcja zapisująca elementy 
-// pojedynczego stosu w kolejności od elementu położonego najniżej
-// do elementu na szczycie stosu.
+// rstack_write_elems_from_bottom() writes a single stack's elements from bottom
+// to top.
 static int rstack_write_elems_from_bottom(FILE *f, elem_t *e, bool *stop);
 
-// rstack_write_dfs() - Przechodzi rekurencyjnie za pomocą algorytmu 
-// DFS po strukturze stosów i dla każdego z nich rozpoczyna
-// zapis elementów w odpowiedniej kolejności.
+// rstack_write_dfs() recursively traverses referenced stacks and writes their
+// elements in bottom-to-top order.
 static int rstack_write_dfs(FILE *f, rstack_t *rs, bool *stop);
 
-// (Opis linijki)
+// Write elements recursively, starting at the bottom of the list.
 static int rstack_write_elems_from_bottom(FILE *f, elem_t *e, bool *stop) {
-    // Jeśli dany element stosu nie istnieje lub zapis został
-    // zatrzymany przez znaleziony stos nie wykonujemy zmian.
+    // Do nothing at the end of the list or after a cycle has stopped writing.
     if (e == nullptr || *stop) {
         return 0;
     }
 
-    // Najpierw, zgodnie z koolejnością zapisywania,
-    // przechodzimy do kolejnego elementu stosu, o ile on istnieje.
+    // Visit the next element first to produce bottom-to-top output.
     if (e->next != nullptr) {
         if (rstack_write_elems_from_bottom(f, e->next, stop) == -1) {
             return -1;
         }
     }
 
-    // Jeżeli wczesniej wykryto cykl, przerywamy dalsze zapisywanie.
+    // Stop writing if a cycle was detected earlier.
     if (*stop) {
         return 0;
     }
 
-    // Jeżeli aktualnie rozpatrywany element to liczba,
-    // to zapisujemy do pliku jej wartość w osobnej linii.
+    // Write each numeric value on a separate line.
     if (e->type == TYPE_VALUE) {
-        // Zachowujemy poprzednią wartość errno, 
-        // aby przy sukcesie jej nie zmieniać.
+        // Preserve the incoming errno on success.
         int saved_errno = errno;
 
-        // Zerujemy errno, żeby rozpoznać przypadek,
-        // gdy biblioteka zgłosi błąd, ale nie ustawi errno.
+        // Clear errno to detect a library failure that does not set it.
         errno = 0;
 
-        // Rozpatrujemy przypadek, gdy zapis się nie powiedzie.
+        // Handle a failed write.
         if (fprintf(f, "%" PRIu64 "\n", e->data.value) < 0) {
-            // Jeśli biblioteka nie ustawiła errno, 
-            // przyjmujemy ogólny błąd wejścia/wyjścia.
+            // Use a generic I/O error if the library did not set errno.
             if (errno == 0) {
                 errno = EIO;
             }
 
-            // Zwracamy błąd.
+            // Report failure.
             return -1;
         }
 
-        // Przy sukcesie przywracamy poprzednie errno.
+        // Restore the previous errno on success.
         errno = saved_errno;
     } 
     
-    // W przeciwnym wypadku, gdy element to stos, 
-    // używamy dedykowanej do rekurencyjnego wywołania się w tym
-    // stosie w celu zapisania elementów w odpowiedniej kolejności.
+    // For a stack reference, recursively write the child's elements in the same
+    // order.
     else {
-        // child wskazuje na podstos będący 
-        // rozpatrywanem elementem stosu.
+        // The referenced child stack.
         rstack_t *child = e->data.stack;
 
         if (rstack_write_dfs(f, child, stop) == -1) {
@@ -901,26 +797,25 @@ static int rstack_write_elems_from_bottom(FILE *f, elem_t *e, bool *stop) {
 
 
 static int rstack_write_dfs(FILE *f, rstack_t *rs, bool *stop) {
-    // Jeśli stos nie istnieje lub zapis został
-    // zatrzymany przez znaleziony cykl, nie wykonujemy zmian.
+    // Do nothing for a null stack or after a cycle has stopped writing.
     if (rs == nullptr || *stop) {
         return 0;
     }
 
-    // Jeżeli rozpatrywany stos jest w trakcie zapisu, to wykryliśmy cykl.
-    // Ustawiamy tę informację i zatrzymujemy dalsze zapisywanie.
+    // A stack already on the active recursion path indicates a cycle. Stop all
+    // further writing.
     if (rs->in_write) {
         *stop = true;
         return 0;
     }
 
-    // Ustawiamy rozpatrywany stos jako aktualnie zapisywany.
+    // Mark this stack as being written on the current recursion path.
     rs->in_write = true;
 
-    // Zapisujemy elementy rozpatrywanego stosu.
+    // Write the stack's elements.
     int result = rstack_write_elems_from_bottom(f, rs->top, stop);
 
-    // Zaznaczamy, że już nie zapisujemy elementów tego stosu.
+    // Remove this stack from the active writing path.
     rs->in_write = false;
 
     return result;
@@ -928,69 +823,62 @@ static int rstack_write_dfs(FILE *f, rstack_t *rs, bool *stop) {
 
 
 int rstack_write(char const *path, rstack_t *rs) {
-    // Niepoprawna ścieżka lub stos.
+    // Reject a null path or stack.
     if (path == nullptr || rs == nullptr) {
-        // Ustawiamy errno na błędny argument.
+        // Report an invalid argument.
         errno = EINVAL;
 
-        // Zwracamy błąd.
+        // Report failure.
         return -1;
     }
 
-    // Zachowujemy poprzednią wartość errno,
-    //  aby przy sukcesie jej nie zmieniać.
+    // Preserve the incoming errno on success.
     int entry_errno = errno;
 
-    // Otwieramy plik do zapisu.
+    // Open the file for writing.
     FILE *f = fopen(path, "w");
 
-    // W przypadku niepowodzenia zwracamy błąd.
-    // errno ustawia fopen().
+    // On failure, return the error reported by fopen().
     if (f == nullptr) {
         return -1;
     }
 
-    // Informacja, czy należy przerwać zapisywanie do pliku z powodu
-    // znalezionego cyklu.
+    // Whether a detected cycle has stopped writing.
     bool stop = false;
 
-    // Rozpoczynamy przechodzenie algorytmem DFS.
-    //  po stosach od tego przekazanego.
+    // Start DFS from the supplied stack.
     int result = rstack_write_dfs(f, rs, &stop);
 
-    // Rozpatrujemy przypadek, gdy podczas zapisu nastąpił błąd.
+    // Handle an error during writing.
     if (result != 0) {
-        // Zapamiętujemy errno.
+        // Preserve the error code.
         int saved_errno = errno;
 
-        // Zamykamy wcześniej otwarty plik.
+        // Close the file.
         fclose(f);
 
-        // Przywracamy poprawne errno.
+        // Restore the original error code.
         errno = saved_errno;
 
-        // Zwracamy błąd.
+        // Report failure.
         return -1;
     }
 
-    // Zerujemy errno, aby rozpatrzeć przypadek,
-    // gdy fclose() zgłosi błąd, ale nie ustawi errno.
+    // Clear errno to detect a fclose() failure that does not set it.
     errno = 0;
 
-    // Zamykamy plik i rozpatrujemy przypadek, gdy skończyło
-    // się to niepowodzeniem.
+    // Close the file and handle any failure.
     if (fclose(f) != 0) {
-        // Jeśli biblioteka nie ustawiła errno, 
-        // przyjmujemy ogólny błąd wejścia/wyjścia.
+        // Use a generic I/O error if the library did not set errno.
         if (errno == 0) {
             errno = EIO;
         }
 
-        // Zwracamy błąd.
+        // Report failure.
         return -1;
     }
 
-    // Przy sukcesie przywracamy poprzednie errno.
+    // Restore the previous errno on success.
     errno = entry_errno;
 
     return 0;
