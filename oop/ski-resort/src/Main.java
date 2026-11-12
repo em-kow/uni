@@ -1,18 +1,24 @@
-import dane.DaneSymulacji;
-import dane.WczytywaczDanych;
-import symulacja.Symulacja;
+import data.SimulationData;
+import data.DataReader;
+import simulation.Simulation;
 
 public class Main {
 
     public static void main(String[] args) {
-        WczytywaczDanych wczytywacz = new WczytywaczDanych();
+        try {
+            DataReader reader = new DataReader();
+            
+            SimulationData data = reader.read();
 
-        DaneSymulacji dane = wczytywacz.wczytaj();
-
-        Symulacja symulacja = new Symulacja(dane);
-
-        symulacja.uruchom();
-
-        symulacja.wypiszStatystyki();
+            Simulation simulation = new Simulation(data);
+            simulation.run();
+            simulation.printStatistics();
+        }
+        catch(Exception | AssertionError exception) {
+            System.err.println(
+                "A program error occurred."
+            );
+            exception.printStackTrace(System.err);
+        }
     }
 }
