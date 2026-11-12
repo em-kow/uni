@@ -1,11 +1,18 @@
 package data;
 
 import java.util.Scanner;
-import model.Athlete;
-import model.Slope;
-import model.Node;
-import model.Lift;
+import java.util.ArrayList;
+import java.util.List;
+
 import util.Time;
+import util.RandomSource;
+import resort.Slope;
+import resort.Node;
+import resort.Lift;
+import athletes.Athlete;
+import athletes.CollectorAthlete;
+import athletes.LocalAthlete;
+import athletes.GreedyAthlete;
 
 import java.util.Locale;
 
@@ -14,8 +21,13 @@ public class DataReader {
     // Scanner that reads input line by line.
     private Scanner inputScanner;
 
+    // Random source used by the program.
+    private RandomSource randomSource;
+
     public DataReader() {
         this.inputScanner = new Scanner(System.in);
+
+        this.randomSource = new RandomSource();
     }
 
     private String readNonEmptyLine() {
@@ -41,21 +53,21 @@ public class DataReader {
 
     // Read all input sections.
     public SimulationData read() {
-        Node[] nodes = readNodes();
-        Lift[] lifts = readLifts(nodes);
-        Slope[] slopes = readSlopes(nodes);
-        Athlete[] athletes = readAthletes(nodes);
+        List<Node> nodes = readNodes();
+        List<Lift> lifts = readLifts(nodes);
+        List<Slope> slopes = readSlopes(nodes);
+        List<Athlete> athletes = readAthletes(nodes, slopes);
 
         // Return an object containing all simulation data.
         return new SimulationData(nodes, lifts, slopes, athletes);
     }
 
-    private Node[] readNodes() {
+    private List<Node> readNodes() {
         // The first number specifies how many nodes to read.
         int nodeCount = Integer.parseInt(readNonEmptyLine());
 
-        // Allocate an array for all nodes.
-        Node[] nodes = new Node[nodeCount];
+        // Create a list for all nodes.
+        List<Node> nodes = new ArrayList<>();
 
         for(int i = 0; i < nodeCount; i++) {
             // Scanner for the description of one node.
@@ -79,7 +91,7 @@ public class DataReader {
             }
 
             // Nodes are read in order, so i is the node ID.
-            nodes[i] = new Node(i, elevation, x, y, accessible);
+            nodes.add(new Node(i, elevation, x, y, accessible));
 
             lineScanner.close();
         }
@@ -87,11 +99,11 @@ public class DataReader {
         return nodes;
     }
 
-    private Lift[] readLifts(Node[] nodes) {
+    private List<Lift> readLifts(List<Node> nodes) {
         // The first number specifies how many lifts to read.
         int liftCount = Integer.parseInt(readNonEmptyLine());
 
-        Lift[] lifts = new Lift[liftCount];
+        List<Lift> lifts = new ArrayList<>();
 
         for(int i = 0; i < liftCount; i ++) {
             // Scanner for the description of one lift.
@@ -105,20 +117,23 @@ public class DataReader {
             int capacity = lineScanner.nextInt();
             int travelTime = lineScanner.nextInt();
 
-            Node start = nodes[startId];
-            Node end = nodes[endId];
+            Node start = nodes.get(startId);
+            Node end = nodes.get(endId);
 
             // Lifts are read in order, so i is the lift ID.
-            lifts[i] = new Lift(
+            Lift lift = new Lift(
                 i,
                 start, 
                 end, 
                 travelTime, 
                 interval, 
-                capacity);
+                capacity
+            );
+            
+            lifts.add(lift);
             
             // Register this lift at its starting node.
-            start.addLift(lifts[i]);
+            start.addLift(lift);
 
             lineScanner.close();
 
@@ -127,11 +142,11 @@ public class DataReader {
         return lifts;
     }
 
-    private Slope[] readSlopes(Node[] nodes) {
+    private List<Slope> readSlopes(List<Node> nodes) {
         // The first number specifies how many slopes to read.
         int slopeCount = Integer.parseInt(readNonEmptyLine());
 
-        Slope[] slopes = new Slope[slopeCount];
+        List<Slope> slopes = new ArrayList<>();
 
         for (int i = 0; i < slopeCount; i++) {
             // Scanner for the description of one slope.
@@ -146,22 +161,23 @@ public class DataReader {
             double baseSurfaceSmoothness = lineScanner.nextDouble();
             double wearResistance = lineScanner.nextDouble();
 
-            Node start = nodes[startId];
-            Node end = nodes[endId];
+            Node start = nodes.get(startId);
+            Node end = nodes.get(endId);
 
             // Slopes are read in order, so i is the slope ID.
-            slopes[i] = new Slope(
-                    i,
-                    start,
-                    end,
-                    travelTime,
-                    difficultyLevel,
-                    baseSurfaceSmoothness,
-                    wearResistance
+            Slope slope = new Slope(
+                i,
+                start,
+                end,
+                travelTime,
+                difficultyLevel,
+                baseSurfaceSmoothness,
+                wearResistance
             );
+            slopes.add(slope);
 
             // Register this slope at its starting node.
-            start.addSlope(slopes[i]);
+            start.addSlope(slope);
 
             lineScanner.close();
         }
@@ -169,24 +185,27 @@ public class DataReader {
         return slopes;
     }
 
-    private Athlete[] readAthletes(Node[] nodes) {
+    private List<Athlete> readAthletes(
+        List<Node> nodes, 
+        List<Slope> slopes
+    ) {
         // The first number specifies how many athlete groups to read.
         int groupCount = Integer.parseInt(readNonEmptyLine());
 
-        // The total number of athletes is not yet known. Start with a temporary
-        // capacity and grow the array when needed.
-        Athlete[] athletes = new Athlete[128];
-        int athleteCount = 0;
+        List<Athlete> athletes = new ArrayList<>();
 
         for (int i = 0; i < groupCount; i++) {
             // Scanner for the first line describing an athlete group.
             Scanner firstLine = createLineScanner(readNonEmptyLine());
 
-            // First line: group size, skill level, spontaneity, and "s" if the
-            // group should be tracked.
+            // First line: group size, skill level, spontaneity, boredom factor,
+            // athlete type, and "s" if the group should be tracked.
             int groupSize = firstLine.nextInt();
             int skillLevel = firstLine.nextInt();
             double spontaneity = firstLine.nextDouble();
+            double boredomFactor = firstLine.nextDouble();
+
+            String athleteType = firstLine.next();
 
             boolean trackedGroup = false;
 
@@ -204,10 +223,11 @@ public class DataReader {
             // Scanner for the second line describing an athlete group.
             Scanner secondLine = createLineScanner(readNonEmptyLine());
 
-            // Second line: weights for difficulty matching and surface
-            // smoothness.
+            // Second line: weights for difficulty matching, surface smoothness,
+            // and boredom.
             double difficultyWeight = secondLine.nextDouble();
             double surfaceWeight = secondLine.nextDouble();
+            double boredomWeight = secondLine.nextDouble();
 
             secondLine.close();
 
@@ -235,24 +255,11 @@ public class DataReader {
 
             thirdLine.close();
 
-            Node startNode = nodes[startNodeId];
+            Node startNode = nodes.get(startNodeId);
 
             // Create the specified number of athletes using the group
             // description.
             for (int j = 0; j < groupSize; j++) {
-                // Grow the athlete array if it is full.
-                if (athleteCount == athletes.length) {
-                    // Double the array capacity to avoid frequent resizing
-                    // without wasting too much memory.
-                    Athlete[] expanded = new Athlete[athletes.length * 2];
-
-                    for (int k = 0; k < athletes.length; k++) {
-                        expanded[k] = athletes[k];
-                    }
-
-                    athletes = expanded;
-
-                }
 
                 // Calculate the start time using the interval.
                 int departureTime = firstStartTime 
@@ -260,28 +267,96 @@ public class DataReader {
 
                 // Athletes are created in order, so the current count is the
                 // new athlete's ID.
-                athletes[athleteCount] = new Athlete(
-                        athleteCount,
+                int athleteId = athletes.size();
+
+                athletes.add(createAthlete(
+                        athleteType,
+                        athleteId,
                         skillLevel,
                         spontaneity,
+                        boredomFactor,
                         trackedGroup,
                         difficultyWeight,
                         surfaceWeight,
+                        boredomWeight,
                         startNode,
-                        departureTime
-                );
-
-                athleteCount++;
+                        departureTime,
+                        slopes
+                ));
             }
         }
 
-        // Return an array of the exact size, without unused entries.
-        Athlete[] result = new Athlete[athleteCount];
+        return athletes;
+    }
 
-        for (int i = 0; i < athleteCount; i++) {
-            result[i] = athletes[i];
+    // Create the appropriate athlete subclass based on its type.
+    private Athlete createAthlete(
+        String athleteType,
+        int id,
+        int skillLevel,
+        double spontaneity,
+        double boredomFactor,
+        boolean tracked,
+        double difficultyWeight,
+        double surfaceWeight,
+        double boredomWeight,
+        Node startNode,
+        int startTime,
+        List<Slope> slopes
+    ) {
+        if(athleteType.equals("L")) {
+            return new LocalAthlete(
+                id, 
+                skillLevel, 
+                spontaneity, 
+                boredomFactor, 
+                tracked, 
+                difficultyWeight, 
+                surfaceWeight, 
+                boredomWeight, 
+                startNode, 
+                startTime, 
+                randomSource
+            );
         }
 
-        return result;
+        if(athleteType.equals("Z")) {
+            return new GreedyAthlete(
+                id, 
+                skillLevel, 
+                spontaneity, 
+                boredomFactor, 
+                tracked, 
+                difficultyWeight, 
+                surfaceWeight, 
+                boredomWeight, 
+                startNode, 
+                startTime, 
+                randomSource,
+                slopes
+            );
+        }
+
+        if(athleteType.equals("K")) {
+            return new CollectorAthlete(
+                id, 
+                skillLevel, 
+                spontaneity, 
+                boredomFactor, 
+                tracked, 
+                difficultyWeight, 
+                surfaceWeight, 
+                boredomWeight, 
+                startNode, 
+                startTime, 
+                randomSource,
+                slopes
+            );
+        }
+        
+        // Throw an exception if the athlete type is not L, Z, or K.
+        throw new IllegalArgumentException(
+            "Unknown athlete type " + athleteType
+        );
     }
 }
