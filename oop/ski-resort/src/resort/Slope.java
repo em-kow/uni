@@ -1,7 +1,7 @@
 package resort;
 
 import events.SlopeRideStart;
-import data.athletes.Athlete;
+import athletes.Athlete;
 import events.Event;
 
 public class Slope extends Connection{

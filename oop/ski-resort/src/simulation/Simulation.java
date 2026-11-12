@@ -4,7 +4,7 @@ import java.util.PriorityQueue;
 import java.util.List;
 
 import data.SimulationData;
-import data.athletes.Athlete;
+import athletes.Athlete;
 import util.Time;
 import resort.Lift;
 import events.LiftDeparture;

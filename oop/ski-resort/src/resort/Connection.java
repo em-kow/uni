@@ -1,6 +1,6 @@
 package resort;
 
-import data.athletes.Athlete;
+import athletes.Athlete;
 import events.Event;
 
 
